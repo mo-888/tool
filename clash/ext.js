@@ -125,6 +125,15 @@ const main = (config) => {
     config["proxy-groups"][0].name = "PROXY";
   }
 
+  // 5.1 将所有 url-test 策略组的 interval 设置为 60 秒（1分钟）
+  if (config["proxy-groups"] && Array.isArray(config["proxy-groups"])) {
+    config["proxy-groups"].forEach(group => {
+      if (group.type === "url-test") {
+        group.interval = 60;
+      }
+    });
+  }
+
   // 6. 覆盖写入新的 rules 规则
   config.rules = [
     "RULE-SET,applications,DIRECT",
