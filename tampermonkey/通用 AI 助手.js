@@ -12,6 +12,8 @@
 // @grant        GM_registerMenuCommand
 // @connect      *
 // @run-at       document-end
+// @downloadURL https://update.greasyfork.org/scripts/577512/AI%20Toolbox%20-%20%E9%80%9A%E7%94%A8%20AI%20%E5%8A%A9%E6%89%8B.user.js
+// @updateURL https://update.greasyfork.org/scripts/577512/AI%20Toolbox%20-%20%E9%80%9A%E7%94%A8%20AI%20%E5%8A%A9%E6%89%8B.meta.js
 // ==/UserScript==
 
 (function() {
