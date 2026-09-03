@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Toolbox - 通用 AI 助手
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
-// @description  在任意网页上提取内容、调用 AI 模型、展示结果并记录历史；支持快捷键与 URL 自动执行
+// @version      1.2.0
+// @description  在任意网页上提取内容、调用 AI 模型、展示结果并记录历史；支持快捷键、URL 自动执行及返回值条件脚本
 // @license      MIT
 // @author       https://github.com/mo-888
 // @match        *://*/*
@@ -277,14 +277,16 @@
             return this.autoRules.find(r => r.id === id) || null;
         }
 
-        addAutoRule(name, urlPattern, promptId = null, modelId = null, enabled = true) {
+        addAutoRule(name, urlPattern, promptId = null, modelId = null, enabled = true, responseCondition = '', actionScript = '') {
             const rule = {
                 id: generateUUID(),
                 name,
                 urlPattern,
                 promptId,
                 modelId,
-                enabled
+                enabled,
+                responseCondition,
+                actionScript
             };
 
             this.autoRules.push(rule);
@@ -851,6 +853,8 @@
                                     <div><strong>URL 正则:</strong> <code>${escapeHTML(r.urlPattern)}</code></div>
                                     <div><strong>提示词:</strong> ${escapeHTML(getPromptName(r.promptId))}</div>
                                     <div><strong>模型:</strong> ${escapeHTML(getModelName(r.modelId))}</div>
+                                    ${r.responseCondition ? `<div><strong>返回值条件:</strong> <code>${escapeHTML(r.responseCondition)}</code></div>` : ''}
+                                    ${r.actionScript ? `<div><strong>执行脚本:</strong> <code>${escapeHTML(r.actionScript.length > 50 ? r.actionScript.substring(0, 50) + '...' : r.actionScript)}</code></div>` : ''}
                                 </div>
                             </div>
                         `).join('')}
@@ -1393,6 +1397,27 @@
                     </select>
                 </div>
 
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 6px; font-weight: 500; color: #555;">返回值条件 (可选)</label>
+                    <input type="text" id="rule-condition"
+                        value="${isEdit ? escapeHTML(rule.responseCondition || '') : ''}"
+                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: monospace;"
+                        placeholder="例如：result.is_close == true">
+                    <p style="margin: 6px 0 0 0; font-size: 12px; color: #999;">
+                        AI 返回 JSON 时，可通过 result 变量访问。留空则不判断条件直接执行脚本。
+                    </p>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 6px; font-weight: 500; color: #555;">执行脚本 (可选)</label>
+                    <textarea id="rule-script" rows="3"
+                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box; font-family: monospace; resize: vertical;"
+                        placeholder="例如：window.close();">${isEdit ? escapeHTML(rule.actionScript || '') : ''}</textarea>
+                    <p style="margin: 6px 0 0 0; font-size: 12px; color: #999;">
+                        条件满足时执行的 JavaScript 代码。支持使用 result 变量。
+                    </p>
+                </div>
+
                 <div style="margin-bottom: 20px;">
                     <label style="display: flex; align-items: center; cursor: pointer;">
                         <input type="checkbox" id="rule-enabled"
@@ -1425,6 +1450,8 @@
                 const urlPattern = document.getElementById('rule-pattern').value.trim();
                 const promptId = document.getElementById('rule-prompt').value || null;
                 const modelId = document.getElementById('rule-model').value || null;
+                const responseCondition = document.getElementById('rule-condition').value.trim();
+                const actionScript = document.getElementById('rule-script').value.trim();
                 const enabled = document.getElementById('rule-enabled').checked;
 
                 if (!name || !urlPattern) {
@@ -1445,10 +1472,12 @@
                         urlPattern,
                         promptId,
                         modelId,
-                        enabled
+                        enabled,
+                        responseCondition,
+                        actionScript
                     });
                 } else {
-                    configManager.addAutoRule(name, urlPattern, promptId, modelId, enabled);
+                    configManager.addAutoRule(name, urlPattern, promptId, modelId, enabled, responseCondition, actionScript);
                 }
 
                 modal.remove();
@@ -1699,7 +1728,7 @@
                         promptOverride,
                         modelOverride,
                         source: 'auto',
-                        ruleName: rule.name
+                        rule: rule
                     });
                 }, 500);
 
@@ -1739,8 +1768,10 @@
             promptOverride = null,
             modelOverride = null,
             source = 'manual',
-            ruleName = ''
+            rule = null
         } = options;
+
+        const ruleName = rule ? rule.name : '';
 
         try {
             const loadingText = source === 'auto'
@@ -1772,6 +1803,43 @@
             );
 
             uiManager.showResultPanel(response.result, false);
+
+            // 自动执行后置脚本逻辑
+            if (source === 'auto' && rule && rule.actionScript) {
+                let parsedResult = response.result;
+
+                // 尝试提取并解析 JSON（兼容 AI 输出 Markdown 代码块包裹的情况）
+                try {
+                    const jsonMatch = response.result.match(/```(?:json)?\s*([\s\S]*?)```/);
+                    const jsonString = jsonMatch ? jsonMatch[1].trim() : response.result.trim();
+                    parsedResult = JSON.parse(jsonString);
+                } catch (e) {
+                    // 非 JSON 格式，保持原字符串
+                }
+
+                let conditionMet = true;
+
+                // 评估条件
+                if (rule.responseCondition) {
+                    try {
+                        const conditionFn = new Function('result', `return (${rule.responseCondition});`);
+                        conditionMet = conditionFn(parsedResult);
+                    } catch (condErr) {
+                        console.error('[AI Toolbox] 条件判断失败:', condErr);
+                        conditionMet = false;
+                    }
+                }
+
+                // 条件满足则执行脚本
+                if (conditionMet) {
+                    try {
+                        const actionFn = new Function('result', rule.actionScript);
+                        actionFn(parsedResult);
+                    } catch (scriptErr) {
+                        console.error('[AI Toolbox] 执行脚本失败:', scriptErr);
+                    }
+                }
+            }
         } catch (error) {
             uiManager.showResultPanel(error.message, true);
         }
@@ -1818,7 +1886,7 @@
         const autoExecutionManager = new AutoExecutionManager(configManager, historyManager, uiManager);
         autoExecutionManager.start();
 
-        console.log('AI Toolbox 已加载：快捷键模式 + 自动执行');
+        console.log('AI Toolbox 已加载：快捷键模式 + 自动执行 + 返回值脚本');
     }
 
     if (document.readyState === 'loading') {
